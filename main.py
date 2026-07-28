@@ -15,7 +15,6 @@ async def create_record(request: Request):
     meal = params.get('meal_amount', '전량')
     bp = params.get('blood_pressure', '정상')
 
-    # Gemini 프롬프트 작성
     prompt = f"""
     당신은 노인장기요양보험 급여제공기록지를 작성하는 전문 요양보호사입니다.
     아래 전달된 기본 정보를 바탕으로, 장기요양급여 제공기록 보고서에 들어갈 깔끔하고 전문적인 문장을 작성해 주세요.
@@ -31,8 +30,9 @@ async def create_record(request: Request):
     """
 
     try:
+        # API 키 등록 여부 검증
         if not GEMINI_API_KEY:
-            raise Exception("Render Environment에 GEMINI_API_KEY가 설정되지 않았습니다.")
+            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
@@ -40,26 +40,38 @@ async def create_record(request: Request):
             contents=prompt,
         )
         record_text = response.text.strip()
+        
+        # 정상 성공 시 2개 말풍선 분리 반환
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": "📋 [급여제공기록 작성 완료]\n아래 문장만 복사해서 사용하세요!"
+                        }
+                    },
+                    {
+                        "simpleText": {
+                            "text": record_text
+                        }
+                    }
+                ]
+            }
+        }
 
     except Exception as e:
-        # Gemini 호출 실패 시 예외 처리 문구
-        record_text = f"방문 시 식사 보조를 제공하였으며, 식사는 {meal} 섭취하셨습니다. 건강 상태 및 혈압은 {bp}(으)로 확인되었습니다."
-
-    # 💡 outputs에 말풍선(simpleText) 2개를 분리해서 응답을 전달합니다.
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": "📋 [급여제공기록 작성 완료]\n아래 메시지만 꾹 눌러 '복사'해서 사용하세요!"
+        # 💡 에러 발생 시 원인을 카카오톡 메시지로 직접 출력합니다.
+        error_message = f"🚨 Gemini 연동 실패 원인:\n{str(e)}"
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": error_message
+                        }
                     }
-                },
-                {
-                    "simpleText": {
-                        "text": record_text
-                    }
-                }
-            ]
+                ]
+            }
         }
-    }
