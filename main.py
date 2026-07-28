@@ -1,10 +1,6 @@
-import os
 from fastapi import FastAPI, Request
-from google import genai
 
 app = FastAPI()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # 한국어 받침 판별 함수 ('로' / '으로' 자동 구분)
 def get_josa_ro(text: str) -> str:
@@ -19,89 +15,75 @@ def get_josa_ro(text: str) -> str:
         return "로" if jongseong in [0, 8] else "으로"
     return "로"
 
+# 혈압 수치에 따라 상태 문구를 만들어주는 함수
+def analyze_blood_pressure(bp_text: str) -> str:
+    bp_str = str(bp_text).strip()
+    
+    # '정상' 같은 문자가 직접 들어왔을 경우
+    if "/" not in bp_str:
+        return f"혈압은 {bp_str} 수준으로 특이사항 없이 양호함"
+
+    try:
+        # 수축기/이완기 수치 분리 (예: "132/94" -> sys=132, dia=94)
+        sys_str, dia_str = bp_str.split("/")
+        sys = int(sys_str.strip())
+        dia = int(dia_str.strip())
+        josa = get_josa_ro(bp_str)
+
+        # 수치 판단 기준
+        if sys >= 140 or dia >= 90:
+            status = "고혈압 수치가 확인되어 지속적인 주의 관찰이 필요함"
+        elif sys >= 130 or dia >= 80:
+            status = "혈압이 다소 높은 편으로 모니터링을 진행함"
+        elif sys < 90 or dia < 60:
+            status = "저혈압 경향이 있어 휴식 및 상태를 관찰함"
+        else:
+            status = "정상 범주 내에 있어 건강 상태 양호함"
+
+        return f"혈압은 {bp_str}{josa} {status}"
+
+    except Exception:
+        # 수치 해석 실패 시 기본 문구
+        josa = get_josa_ro(bp_str)
+        return f"혈압은 {bp_str}{josa} 확인됨"
+
 @app.post("/")
 async def create_record(request: Request):
     body = await request.json()
     params = body.get('action', {}).get('params', {})
     
-    # 파라미터 값 수신
+    # 1. 카카오톡에서 파라미터 값 수신
     meal = params.get('meal_amount', '전량')
     bp = params.get('blood_pressure', '120/80')
 
-    # 1. 입력값 정돈
+    # 2. 식사량 단어 정돈 ("1/2 섭취" -> "1/2")
     clean_meal = meal.replace("섭취", "").strip()
-    josa_ro = get_josa_ro(bp)
+    if clean_meal in ["전량", "1/2", "1/3", "2/3"]:
+        meal_text = f"식사는 {clean_meal} 섭취하셨습니다."
+    else:
+        meal_text = f"식사는 {clean_meal}하셨습니다."
 
-    # Gemini 프롬프트
-    prompt = f"""
-    당신은 노인장기요양보험 급여제공기록지를 작성하는 전문 요양보호사입니다.
-    아래 전달된 기본 정보를 바탕으로, 장기요양급여 제공기록 보고서에 들어갈 깔끔하고 전문적인 문장을 작성해 주세요.
+    # 3. 혈압 상태 자동 분석 문장 생성
+    bp_result_text = analyze_blood_pressure(bp)
 
-    [기본 정보]
-    - 식사 보조 및 섭취량: {clean_meal}
-    - 건강 상태 및 측정된 혈압 수치: {bp}
+    # 4. 최종 보고서 문장 완성
+    final_record = f"방문 시 식사 보조를 제공하였으며, {meal_text} 건강 상태 점검 결과 {bp_result_text}."
 
-    [작성 규칙]
-    1. 수치 입력에 따른 혈압 상태 판정 기준:
-       - 수축기 120 미만 AND 이완기 80 미만: 정상 혈압 (양호함)
-       - 수축기 120~129 AND 이완기 80 미만: 주의 관찰 필요
-       - 수축기 130 이상 OR 이완기 80 이상: 고혈압 경향/높음 (주의 관찰 및 모니터링 필요)
-       - 수축기 90 미만 OR 이완기 60 미만: 저혈압 경향 (주의 관찰 필요)
-    2. 정중하고 객관적인 요양보호 서비스 기록체(~함, ~하여 제공함 또는 ~하였습니다 체)로 작성해 주세요.
-    3. 식사 돌봄 내역과 혈압 측정 수치 및 상태를 종합하여 자연스러운 2~3문장의 보고서 요약문으로 만들어 주세요.
-    4. 부연 설명 없이 완성된 보고서 문구만 출력해 주세요.
-    """
-
-    try:
-        if not GEMINI_API_KEY:
-            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
-
-        # 최신 google-genai 클라이언트 생성
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        
-        # 최신 표준 모델 사용
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        record_text = response.text.strip()
-
-        return {
-            "version": "2.0",
-            "template": {
-                "outputs": [
-                    {
-                        "simpleText": {
-                            "text": "📋 [급여제공기록 작성 완료]\n아래 문장만 복사해서 사용하세요!"
-                        }
-                    },
-                    {
-                        "simpleText": {
-                            "text": record_text
-                        }
+    # 5. 복사하기 편하도록 2개의 말풍선으로 분리 출력
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": "📋 [급여제공기록 작성 완료]\n아래 문장만 복사해서 사용하세요!"
                     }
-                ]
-            }
-        }
-
-    except Exception as e:
-        error_info = f"🚨 Gemini 연동 실패 (오류 내용: {str(e)})"
-        fallback_text = f"방문 시 식사 보조를 제공하였으며, 식사는 {clean_meal} 섭취하셨습니다. 건강 상태 및 혈압은 {bp}{josa_ro} 확인되었습니다."
-        
-        return {
-            "version": "2.0",
-            "template": {
-                "outputs": [
-                    {
-                        "simpleText": {
-                            "text": error_info
-                        }
-                    },
-                    {
-                        "simpleText": {
-                            "text": fallback_text
-                        }
+                },
+                {
+                    "simpleText": {
+                        "text": final_record
                     }
-                ]
-            }
+                }
+            ]
         }
+    }
