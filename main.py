@@ -28,7 +28,7 @@ async def create_record(request: Request):
     meal = params.get('meal_amount', '전량')
     bp = params.get('blood_pressure', '정상')
 
-    # 1. 식사량 입력값 다듬기 ("1/2 섭취" -> "1/2")
+    # 1. 식사량 입력값 정리 ("1/2 섭취" -> "1/2")
     clean_meal = meal.replace("섭취", "").strip()
     
     # 2. 혈압 조사 자동 구하기 (123/82 -> "로", 120/80 -> "으로")
@@ -50,11 +50,13 @@ async def create_record(request: Request):
 
     try:
         if not GEMINI_API_KEY:
-            raise Exception("GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # 💡 모델명을 'gemini-2.0-flash'로 수정했습니다.
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt,
         )
         record_text = response.text.strip()
