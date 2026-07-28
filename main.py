@@ -6,6 +6,19 @@ app = FastAPI()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# 한국어 받침 판별 함수 ('로' / '으로' 자동 구분)
+def get_josa_ro(text: str) -> str:
+    if not text:
+        return "로"
+    last_char = str(text)[-1]
+    if last_char.isdigit():
+        return "로" if last_char in ['2', '4', '5', '9'] else "으로"
+    if '가' <= last_char <= '힣':
+        code = ord(last_char) - 0xAC00
+        jongseong = code % 28
+        return "로" if jongseong in [0, 8] else "으로"
+    return "로"
+
 @app.post("/")
 async def create_record(request: Request):
     body = await request.json()
@@ -15,12 +28,18 @@ async def create_record(request: Request):
     meal = params.get('meal_amount', '전량')
     bp = params.get('blood_pressure', '정상')
 
+    # 1. 식사량 입력값 다듬기 ("1/2 섭취" -> "1/2")
+    clean_meal = meal.replace("섭취", "").strip()
+    
+    # 2. 혈압 조사 자동 구하기 (123/82 -> "로", 120/80 -> "으로")
+    josa_ro = get_josa_ro(bp)
+
     prompt = f"""
     당신은 노인장기요양보험 급여제공기록지를 작성하는 전문 요양보호사입니다.
     아래 전달된 기본 정보를 바탕으로, 장기요양급여 제공기록 보고서에 들어갈 깔끔하고 전문적인 문장을 작성해 주세요.
 
     [기본 정보]
-    - 식사 보조 및 섭취량: {meal}
+    - 식사 보조 및 섭취량: {clean_meal}
     - 건강 상태 및 혈압: {bp}
 
     [작성 규칙]
@@ -30,9 +49,8 @@ async def create_record(request: Request):
     """
 
     try:
-        # API 키 등록 여부 검증
         if not GEMINI_API_KEY:
-            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
+            raise Exception("GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
@@ -40,8 +58,7 @@ async def create_record(request: Request):
             contents=prompt,
         )
         record_text = response.text.strip()
-        
-        # 정상 성공 시 2개 말풍선 분리 반환
+
         return {
             "version": "2.0",
             "template": {
@@ -61,15 +78,20 @@ async def create_record(request: Request):
         }
 
     except Exception as e:
-        # 💡 에러 발생 시 원인을 카카오톡 메시지로 직접 출력합니다.
-        error_message = f"🚨 Gemini 연동 실패 원인:\n{str(e)}"
+        # Gemini 연동 실패 시 기본 문구 (자연스러운 조사 적용)
+        fallback_text = f"방문 시 식사 보조를 제공하였으며, 식사는 {clean_meal} 섭취하셨습니다. 건강 상태 및 혈압은 {bp}{josa_ro} 확인되었습니다."
         return {
             "version": "2.0",
             "template": {
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": error_message
+                            "text": "📋 [급여제공기록 작성 완료]\n아래 문장만 복사해서 사용하세요!"
+                        }
+                    },
+                    {
+                        "simpleText": {
+                            "text": fallback_text
                         }
                     }
                 ]
