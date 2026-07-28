@@ -31,9 +31,10 @@ async def create_record(request: Request):
     # 1. 식사량 입력값 정리 ("1/2 섭취" -> "1/2")
     clean_meal = meal.replace("섭취", "").strip()
     
-    # 2. 혈압 조사 자동 구하기
+    # 2. 혈압 조사 자동 구하기 (Fallback용)
     josa_ro = get_josa_ro(bp)
 
+    # Gemini 프롬프트 작성
     prompt = f"""
     당신은 노인장기요양보험 급여제공기록지를 작성하는 전문 요양보호사입니다.
     아래 전달된 기본 정보를 바탕으로, 장기요양급여 제공기록 보고서에 들어갈 깔끔하고 전문적인 문장을 작성해 주세요.
@@ -45,9 +46,9 @@ async def create_record(request: Request):
     [혈압 상태 판단 기준 및 작성 규칙]
     1. 수치 입력에 따른 혈압 상태 판정 기준:
        - 수축기(앞) 120 미만 AND 이완기(뒤) 80 미만: 정상 혈압 (양호함)
-       - 수축기 120~130 미만 OR 이완기 80 미만: 주의/주의 관찰 필요
-       - 수축기 130 이상 OR 이완기 80 이상: 고혈압 전단계 또는 고혈압 (주의 관찰 및 모니터링 필요)
-       - 수축기 90 미만 OR 이완기 60 미만: 저혈압 (주의 관찰 필요)
+       - 수축기 120~129 AND 이완기 80 미만: 주의 관찰 필요
+       - 수축기 130 이상 OR 이완기 80 이상: 고혈압 경향/높음 (주의 관찰 및 모니터링 필요)
+       - 수축기 90 미만 OR 이완기 60 미만: 저혈압 경향 (주의 관찰 필요)
        - 만약 '정상' 같은 단어만 입력되어 있다면 수치 판단 없이 정상 상태로 기록해 주세요.
     2. 작성 방식:
        - 정중하고 객관적인 요양보호 서비스 기록체(~함, ~하여 제공함 또는 ~하였습니다 체)로 작성해 주세요.
@@ -57,12 +58,13 @@ async def create_record(request: Request):
 
     try:
         if not GEMINI_API_KEY:
-            raise Exception("Render의 Environment에 GEMINI_API_KEY가 등록되지 않았습니다.")
+            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         
+        # 💡 할당량이 기본 제공되는 'gemini-1.5-flash' 모델로 변경
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         record_text = response.text.strip()
@@ -86,7 +88,7 @@ async def create_record(request: Request):
         }
 
     except Exception as e:
-        # 💡 에러 원인을 카카오톡 첫 번째 말풍선에 직접 표시합니다.
+        # Gemini 호출 실패 시 메시지와 함께 표시
         error_info = f"🚨 Gemini 연동 실패 (오류 내용: {str(e)})"
         fallback_text = f"방문 시 식사 보조를 제공하였으며, 식사는 {clean_meal} 섭취하셨습니다. 건강 상태 및 혈압은 {bp}{josa_ro} 확인되었습니다."
         
