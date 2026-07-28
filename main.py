@@ -31,10 +31,9 @@ async def create_record(request: Request):
     # 1. 식사량 입력값 정리 ("1/2 섭취" -> "1/2")
     clean_meal = meal.replace("섭취", "").strip()
     
-    # 2. 혈압 조사 자동 구하기 (Fallback용)
+    # 2. 혈압 조사 자동 구하기
     josa_ro = get_josa_ro(bp)
 
-    # 💡 Gemini 프롬프트에 혈압 판단 로직 추가
     prompt = f"""
     당신은 노인장기요양보험 급여제공기록지를 작성하는 전문 요양보호사입니다.
     아래 전달된 기본 정보를 바탕으로, 장기요양급여 제공기록 보고서에 들어갈 깔끔하고 전문적인 문장을 작성해 주세요.
@@ -58,7 +57,7 @@ async def create_record(request: Request):
 
     try:
         if not GEMINI_API_KEY:
-            raise Exception("Render의 Environment 항목에 GEMINI_API_KEY가 등록되지 않았습니다.")
+            raise Exception("Render의 Environment에 GEMINI_API_KEY가 등록되지 않았습니다.")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         
@@ -87,15 +86,17 @@ async def create_record(request: Request):
         }
 
     except Exception as e:
-        # Gemini 연동 실패 시 기본 예외 문구
+        # 💡 에러 원인을 카카오톡 첫 번째 말풍선에 직접 표시합니다.
+        error_info = f"🚨 Gemini 연동 실패 (오류 내용: {str(e)})"
         fallback_text = f"방문 시 식사 보조를 제공하였으며, 식사는 {clean_meal} 섭취하셨습니다. 건강 상태 및 혈압은 {bp}{josa_ro} 확인되었습니다."
+        
         return {
             "version": "2.0",
             "template": {
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": "📋 [급여제공기록 작성 완료]\n아래 문장만 복사해서 사용하세요!"
+                            "text": error_info
                         }
                     },
                     {
