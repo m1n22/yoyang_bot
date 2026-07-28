@@ -2,7 +2,8 @@ from fastapi import FastAPI, Request
 
 app = FastAPI()
 
-@app.post("/api/create-record")
+# 카카오톡이 보내는 요청 주소를 받아주도록 "/"로 변경했습니다.
+@app.post("/")
 async def create_record(request: Request):
     body = await request.json()
     params = body.get('action', {}).get('params', {})
